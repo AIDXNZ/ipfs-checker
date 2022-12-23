@@ -16,10 +16,12 @@ libp2p = {version="0.50.0", features=[
      "tcp",
      "mplex",
      "yamux",
-     "async-std"
+     "async-std",
+     "rsa"
 ]}
 futures = "*"
 async-std = "*"
+clap = {version="*", features=["cargo"]}
 
 [dependencies.confy]
 features = ["yaml_conf"]

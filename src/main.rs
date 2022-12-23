@@ -1,11 +1,12 @@
-use std::{thread, fs::File, io::BufReader, ops::Mul, borrow::BorrowMut};
+use std::{thread, fs::File, io::BufReader, ops::Mul, borrow::BorrowMut, time::Duration};
+use clap::{command, arg, value_parser};
 use futures::{prelude, executor::block_on, future::select, StreamExt, select};
 use libp2p::{Multiaddr, PeerId, Swarm, identity, identify, core::{upgrade::Version, transport::Boxed, muxing::StreamMuxerBox}, tcp::async_io, dns::DnsConfig, noise, yamux::YamuxConfig, swarm::SwarmEvent};
 use serde_derive::{Serialize, Deserialize};
 use yaml_rust::YamlLoader;
 use libp2p::Transport;
 use std::io::prelude::*;
-use async_std::prelude::*;
+use async_std::{prelude::*, path::PathBuf};
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 struct MyConfig {
@@ -18,7 +19,7 @@ async fn build_transport(
     
 ) -> Boxed<(PeerId, StreamMuxerBox)>{
     let base_transport = DnsConfig::system(async_io::Transport::new(
-        libp2p::tcp::Config::default().nodelay(true),
+        libp2p::tcp::Config::default().port_reuse(true).nodelay(true),
     )).await.unwrap();
     let noise_config = noise::NoiseAuthenticated::xx(&key_pair).unwrap();
     let yamux_config = YamuxConfig::default();
@@ -30,14 +31,23 @@ async fn build_transport(
     .boxed()
 }
 
+
 fn main() {
+    let timeout = async_std::future::timeout(Duration::from_secs(30), async_main());
     let handler = thread::spawn(||{
-        block_on(async_main());
+        block_on(timeout);
     });
     handler.join().unwrap();
 }
 
 async fn async_main() -> Result<(), ::std::io::Error> {
+
+    let matches = command!()
+        .arg(
+            arg!(
+                -f --file <File> "Config Path"
+            ).value_parser(value_parser!(PathBuf)))
+        .get_matches();
 
     let local_key = identity::Keypair::generate_ed25519();
     let local_peer_id = PeerId::from(local_key.clone().public());
@@ -55,8 +65,10 @@ async fn async_main() -> Result<(), ::std::io::Error> {
         println!("Listening on {:?}", lis);
     }
 
+    let path = matches.get_one::<PathBuf>("file").unwrap();
 
-    let mut file = File::open("config.yaml").unwrap();
+
+    let file = File::open(path).unwrap();
     let mut buf_reader = BufReader::new(file);
     let mut contents = String::new();
     buf_reader.read_to_string(&mut contents).unwrap();
@@ -66,6 +78,10 @@ async fn async_main() -> Result<(), ::std::io::Error> {
     
     let len = &doc["addrs"].clone().into_iter().count();
 
+    
+
+    let mut failed_addrs = vec![];
+
     for i in 0..len.clone() {
         let item = doc["addrs"][i].as_str().unwrap();
         let check = item.parse::<Multiaddr>();
@@ -74,18 +90,31 @@ async fn async_main() -> Result<(), ::std::io::Error> {
             Ok(addr) => {
                 swarm.dial(addr).unwrap()
             },
-            Err(err) => println!("Invalid Multiaddress {:?}", item)
+            Err(err) => {
+                failed_addrs.push(item);
+                println!("Error {:?}", err);
+            }
         }
 
     }
+
+
+
 
     loop {
         select! {
             event = swarm.select_next_some() => {
                 match event {
-                    SwarmEvent::Behaviour(identify::Event::Received {info, ..}) => {
-                        println!("{:?}", info);
-                    }
+                    SwarmEvent::ConnectionEstablished {
+                        peer_id,
+                        endpoint,
+                        ..
+                    } => {
+                        println!("{:?}", endpoint);
+                    },
+                    SwarmEvent::OutgoingConnectionError {peer_id, error} => {
+                            println!("Connection Error: {:?}", error);
+                        }
                     _ => (),
                 }
             }
