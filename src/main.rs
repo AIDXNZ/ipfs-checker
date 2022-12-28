@@ -110,7 +110,7 @@ async fn async_main() -> Result<(), ::std::io::Error> {
                         endpoint,
                         ..
                     } => {
-                        println!("{:?}", endpoint);
+                        println!("{:?},", endpoint.get_remote_address());
                     },
                     SwarmEvent::OutgoingConnectionError {peer_id, error} => {
                             println!("Connection Error: {:?}", error);
