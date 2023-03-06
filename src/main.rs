@@ -1,12 +1,20 @@
-use std::{thread, fs::File, io::BufReader, ops::Mul, borrow::BorrowMut, time::Duration};
-use clap::{command, arg, value_parser};
-use futures::{prelude, executor::block_on, future::select, StreamExt, select};
-use libp2p::{Multiaddr, PeerId, Swarm, identity, identify, core::{upgrade::Version, transport::Boxed, muxing::StreamMuxerBox}, tcp::async_io, dns::DnsConfig, noise, yamux::YamuxConfig, swarm::SwarmEvent};
-use serde_derive::{Serialize, Deserialize};
-use yaml_rust::YamlLoader;
+use async_std::{path::PathBuf, prelude::*};
+use clap::{arg, command, value_parser};
+use futures::{executor::block_on, future::select, prelude, select, StreamExt};
 use libp2p::Transport;
+use libp2p::{
+    core::{muxing::StreamMuxerBox, transport::Boxed, upgrade::Version},
+    dns::DnsConfig,
+    identify, identity, noise,
+    swarm::SwarmEvent,
+    tcp::async_io,
+    yamux::YamuxConfig,
+    Multiaddr, PeerId, Swarm,
+};
+use serde_derive::{Deserialize, Serialize};
 use std::io::prelude::*;
-use async_std::{prelude::*, path::PathBuf};
+use std::{borrow::BorrowMut, fs::File, io::BufReader, ops::Mul, thread, time::Duration};
+use yaml_rust::YamlLoader;
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 struct MyConfig {
@@ -14,39 +22,40 @@ struct MyConfig {
     addrs: Vec<String>,
 }
 
-async fn build_transport(
-    key_pair: identity::Keypair,
-    
-) -> Boxed<(PeerId, StreamMuxerBox)>{
+async fn build_transport(key_pair: identity::Keypair) -> Boxed<(PeerId, StreamMuxerBox)> {
     let base_transport = DnsConfig::system(async_io::Transport::new(
-        libp2p::tcp::Config::default().port_reuse(true).nodelay(true),
-    )).await.unwrap();
+        libp2p::tcp::Config::default()
+            .port_reuse(true)
+            .nodelay(true),
+    ))
+    .await
+    .unwrap();
     let noise_config = noise::NoiseAuthenticated::xx(&key_pair).unwrap();
     let yamux_config = YamuxConfig::default();
 
     base_transport
-    .upgrade(Version::V1)
-    .authenticate(noise_config)
-    .multiplex(yamux_config)
-    .boxed()
+        .upgrade(Version::V1)
+        .authenticate(noise_config)
+        .multiplex(yamux_config)
+        .boxed()
 }
-
 
 fn main() {
     let timeout = async_std::future::timeout(Duration::from_secs(30), async_main());
-    let handler = thread::spawn(||{
+    let handler = thread::spawn(|| {
         block_on(timeout);
     });
     handler.join().unwrap();
 }
 
 async fn async_main() -> Result<(), ::std::io::Error> {
-
     let matches = command!()
         .arg(
             arg!(
                 -f --file <File> "Config Path"
-            ).value_parser(value_parser!(PathBuf)))
+            )
+            .value_parser(value_parser!(PathBuf)),
+        )
         .get_matches();
 
     let local_key = identity::Keypair::generate_ed25519();
@@ -55,8 +64,11 @@ async fn async_main() -> Result<(), ::std::io::Error> {
     let mut swarm = {
         Swarm::with_threadpool_executor(
             transport,
-            identify::Behaviour::new(identify::Config::new("/ipfs/id/1.0.0".to_string(), local_key.clone().public())),
-            local_peer_id
+            identify::Behaviour::new(identify::Config::new(
+                "/ipfs/id/1.0.0".to_string(),
+                local_key.clone().public(),
+            )),
+            local_peer_id,
         )
     };
 
@@ -67,7 +79,6 @@ async fn async_main() -> Result<(), ::std::io::Error> {
 
     let path = matches.get_one::<PathBuf>("file").unwrap();
 
-
     let file = File::open(path).unwrap();
     let mut buf_reader = BufReader::new(file);
     let mut contents = String::new();
@@ -75,10 +86,8 @@ async fn async_main() -> Result<(), ::std::io::Error> {
     let cfg = YamlLoader::load_from_str(&contents).unwrap();
 
     let doc = &cfg[0];
-    
-    let len = &doc["addrs"].clone().into_iter().count();
 
-    
+    let len = &doc["addrs"].clone().into_iter().count();
 
     let mut failed_addrs = vec![];
 
@@ -88,38 +97,43 @@ async fn async_main() -> Result<(), ::std::io::Error> {
 
         match check {
             Ok(addr) => {
-                swarm.dial(addr).unwrap()
-            },
-            Err(err) => {
-                failed_addrs.push(item);
-                println!("Error {:?}", err);
-            }
-        }
-
-    }
-
-
-
-
-    loop {
-        select! {
-            event = swarm.select_next_some() => {
-                match event {
-                    SwarmEvent::ConnectionEstablished {
-                        peer_id,
-                        endpoint,
-                        ..
-                    } => {
-                        println!("{:?},", endpoint.get_remote_address());
-                    },
-                    SwarmEvent::OutgoingConnectionError {peer_id, error} => {
-                            println!("Connection Error: {:?}", error);
+                match swarm.dial(addr.clone()) {
+                    Ok(_) => loop {
+                        select! {
+                            event = swarm.select_next_some() => {
+                                match event {
+                                    SwarmEvent::ConnectionEstablished {
+                                        peer_id,
+                                        endpoint,
+                                        ..
+                                    } => {
+                                        //println!("{:?},", endpoint.get_remote_address());
+                                        
+                                        break;
+                                    },
+                                    SwarmEvent::OutgoingConnectionError {peer_id, error} => {
+                                            //println!("Connection Error: {:?}", error);
+                                            failed_addrs.push(addr.clone().to_string());
+                                            break;
+                                        }
+                                    _ => (),
+                                }
+                            }
                         }
-                    _ => (),
+                    },
+                    Err(e) => {
+                        //failed_addrs.push(addr);
+                        println!("Failed Dial: {:?}", e);
+                    }
                 }
             }
+            Err(err) => {
+                failed_addrs.push(item.to_string());
+            println!("Invalid MultiAddress: {:?}", item);
+            }
         }
     }
-    
+    println!("IPFS Checker....");
+    print!("{:?}", failed_addrs);
     Ok(())
-} 
+}
