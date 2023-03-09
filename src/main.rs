@@ -41,6 +41,12 @@ async fn build_transport(key_pair: identity::Keypair) -> Boxed<(PeerId, StreamMu
 }
 
 fn main() {
+     println!(r"    ________  ___________    ________  ________________ __ __________ 
+   /  _/ __ \/ ____/ ___/   / ____/ / / / ____/ ____/ //_// ____/ __ \
+   / // /_/ / /_   \__ \   / /   / /_/ / __/ / /   / ,<  / __/ / /_/ /
+ _/ // ____/ __/  ___/ /  / /___/ __  / /___/ /___/ /| |/ /___/ _, _/ 
+/___/_/   /_/    /____/   \____/_/ /_/_____/\____/_/ |_/_____/_/ |_|  
+                                                                      ");
     let timeout = async_std::future::timeout(Duration::from_secs(30), async_main());
     let handler = thread::spawn(|| {
         block_on(timeout);
@@ -133,12 +139,12 @@ async fn async_main() -> Result<(), ::std::io::Error> {
             }
         }
     }
-    println!(r"    ________  ___________    ________  ________________ __ __________ 
-   /  _/ __ \/ ____/ ___/   / ____/ / / / ____/ ____/ //_// ____/ __ \
-   / // /_/ / /_   \__ \   / /   / /_/ / __/ / /   / ,<  / __/ / /_/ /
- _/ // ____/ __/  ___/ /  / /___/ __  / /___/ /___/ /| |/ /___/ _, _/ 
-/___/_/   /_/    /____/   \____/_/ /_/_____/\____/_/ |_/_____/_/ |_|  
-                                                                      ");
-    print!("{:?}", failed_addrs);
+    if failed_addrs.is_empty()   {
+        println!("All addresses are dialable!")
+    } else {
+        println!("Failed to dial {} addresses out of {:?}", failed_addrs.len(), len.clone());
+        print!("{:?}", failed_addrs);
+    }
+    
     Ok(())
 }
